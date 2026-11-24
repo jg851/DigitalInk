@@ -23,7 +23,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -59,8 +58,6 @@ class MainActivity : ComponentActivity() {
 fun Doodle(modifier: Modifier = Modifier) {
     val defaultPrompt = "請在畫布區手寫，再按「開始辨識」按鈕"
     var recognizedText by remember { mutableStateOf(defaultPrompt) }
-    var strokeCount by remember { mutableIntStateOf(0) }
-    var hasActiveStroke by remember { mutableStateOf(false) }
 
     // 建立一個路徑物件（使用 apply 簡化，保留初始三角形）
     var path by remember {
@@ -100,17 +97,16 @@ fun Doodle(modifier: Modifier = Modifier) {
                     // 監聽拖曳手勢
                     detectDragGestures(
                         onDragStart = { offset -> /* 手指按下 */
-                            // 按下：記錄 Path 起點
+                            // 按下：記錄 Path 起點與時間戳記
                             val x = offset.x
                             val y = offset.y
-                            val t = System.currentTimeMillis()  // 時間戳記
+                            val t = System.currentTimeMillis()
 
                             path.moveTo(x, y)
 
                             // ML Kit Ink.Stroke.Builder 紀錄起點
                             strokeBuilder = Ink.Stroke.builder()
                             strokeBuilder?.addPoint(Ink.Point.create(x, y, t))
-                            hasActiveStroke = true
                         },
                         onDrag = { change, dragAmount -> /* 手指移動 */
                             @Suppress("UNUSED_VARIABLE")
@@ -136,18 +132,16 @@ fun Doodle(modifier: Modifier = Modifier) {
                             path = tempPath
                         },
                         onDragEnd = { /* 手指離開 */
-                            strokeBuilder?.let { builder ->
-                                inkBuilder.addStroke(builder.build())
+                            // 手指離開：將打包好的 Stroke 加入 inkBuilder
+                            strokeBuilder?.build()?.let { stroke ->
+                                inkBuilder.addStroke(stroke)
                             }
+
+                            // 重置當前 Stroke Builder 準備下一筆劃
                             strokeBuilder = null
-                            if (hasActiveStroke) {
-                                strokeCount++
-                                hasActiveStroke = false
-                            }
                         },
                         onDragCancel = { /* 手勢中斷 */
                             strokeBuilder = null
-                            hasActiveStroke = false
                         }
                     )
                 }
@@ -175,12 +169,15 @@ fun Doodle(modifier: Modifier = Modifier) {
             // 開始辨識
             Button(
                 onClick = {
-                    recognizedText = if (strokeCount == 0) {
-                        "尚未偵測到筆畫，請先在畫布區手寫"
-                    } else {
-                        val ink = inkBuilder.build()
-                        "已收集 ${ink.strokes.size} 筆手寫軌跡，準備辨識..."
+                    val ink = inkBuilder.build()   // 包含全部手寫軌跡的「欲辨識內容」
+
+                    if (ink.strokes.isEmpty()) {
+                        recognizedText = "請先書寫內容"
+                        return@Button
                     }
+
+                    recognizedText = "正在處理中..."
+                    // TODO: 在此串接 DigitalInkRecognizer 並以 ink 呼叫 recognize(ink)
                 }
             ) {
                 Text("開始辨識")
@@ -192,8 +189,6 @@ fun Doodle(modifier: Modifier = Modifier) {
             Button(
                 onClick = {
                     path = Path()
-                    strokeCount = 0
-                    hasActiveStroke = false
                     strokeBuilder = null
                     inkBuilder = Ink.builder()
                     recognizedText = defaultPrompt
