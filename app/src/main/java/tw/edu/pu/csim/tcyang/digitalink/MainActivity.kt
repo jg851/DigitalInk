@@ -60,6 +60,36 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private fun translateShapeLabelToChinese(label: String): String {
+    return when (label.trim().lowercase()) {
+        "star" -> "星星"
+        "sun" -> "太陽"
+        "moon" -> "月亮"
+        "heart" -> "愛心"
+        "cloud" -> "雲朵"
+        "tree" -> "樹"
+        "flower" -> "花"
+        "circle" -> "圓形"
+        "square" -> "正方形"
+        "triangle" -> "三角形"
+        "line" -> "直線"
+        "house" -> "房子"
+        "car" -> "汽車"
+        "smiley face", "face" -> "笑臉"
+        "lightning" -> "閃電"
+        "rainbow" -> "彩虹"
+        "apple" -> "蘋果"
+        "cat" -> "貓"
+        "dog" -> "狗"
+        "fish" -> "魚"
+        "bird" -> "鳥"
+        "cup" -> "杯子"
+        "key" -> "鑰匙"
+        "umbrella" -> "雨傘"
+        else -> "其他圖案（$label）"
+    }
+}
+
 @Composable
 fun Doodle(modifier: Modifier = Modifier) {
     val defaultPrompt = "請在畫布區手寫，再按「開始辨識」按鈕"
@@ -79,23 +109,24 @@ fun Doodle(modifier: Modifier = Modifier) {
         mutableStateOf<Ink.Stroke.Builder?>(null)
     }
 
-    // 記憶 ML Kit 模型與 Recognizer 實體 (繁體中文 zh-Hant) ----------
+    // 記憶 ML Kit 模型與 Recognizer 實體（草圖辨識 zxx-Zsym-x-autodraw）----------
+    val modelTag = "zxx-Zsym-x-autodraw"
 
-    // 取得語言辨識碼
-    val modelIdentifier = remember {
+    // 取得圖案辨識碼
+    val modelIdentifier = remember(modelTag) {
         try {
-            DigitalInkRecognitionModelIdentifier.fromLanguageTag("zh-Hant")
+            DigitalInkRecognitionModelIdentifier.fromLanguageTag(modelTag)
         } catch (e: Exception) {
             null
         }
     }
 
-    // 建立語言模型物件
+    // 建立模型物件
     val model = remember(modelIdentifier) {
         modelIdentifier?.let { DigitalInkRecognitionModel.builder(it).build() }
     }
 
-    // 建立手寫辨識引擎
+    // 建立手寫/圖案辨識引擎
     val recognizer = remember(model) {
         model?.let { DigitalInkRecognition.getClient(DigitalInkRecognizerOptions.builder(it).build()) }
     }
@@ -115,14 +146,12 @@ fun Doodle(modifier: Modifier = Modifier) {
                     // 監聽拖曳手勢
                     detectDragGestures(
                         onDragStart = { offset -> /* 手指按下 */
-                            // 按下：記錄 Path 起點與時間戳記
                             val x = offset.x
                             val y = offset.y
                             val t = System.currentTimeMillis()
 
                             path.moveTo(x, y)
 
-                            // ML Kit Ink.Stroke.Builder 紀錄起點
                             strokeBuilder = Ink.Stroke.builder()
                             strokeBuilder?.addPoint(Ink.Point.create(x, y, t))
                         },
@@ -132,30 +161,22 @@ fun Doodle(modifier: Modifier = Modifier) {
                             @Suppress("UNUSED_VARIABLE")
                             val dy = dragAmount.y
 
-                            // 消費拖曳事件（避免影響父層元件手勢）
-                            // 這個移動手勢已經被 Canvas 處理，請不要再傳給外層的其他元件
                             change.consume()
 
-                            // 移動：拉線並加入點座標
                             val x = change.position.x
                             val y = change.position.y
                             val t = System.currentTimeMillis()
                             path.lineTo(x, y)
                             strokeBuilder?.addPoint(Ink.Point.create(x, y, t))
 
-                            // 複製出一個內容一模一樣、但記憶體位址全新的 Path 物件
-                            // 並指派回 path，藉此強制 Compose 重繪 Canvas 畫面
                             val tempPath = Path()
                             tempPath.addPath(path)
                             path = tempPath
                         },
                         onDragEnd = { /* 手指離開 */
-                            // 手指離開：將打包好的 Stroke 加入 inkBuilder
                             strokeBuilder?.build()?.let { stroke ->
                                 inkBuilder.addStroke(stroke)
                             }
-
-                            // 重置當前 Stroke Builder 準備下一筆劃
                             strokeBuilder = null
                         },
                         onDragCancel = { /* 手勢中斷 */
@@ -164,7 +185,6 @@ fun Doodle(modifier: Modifier = Modifier) {
                     )
                 }
         ) {
-            // 繪製黑色路徑，透明度 1（不透明），線條粗細 10
             drawPath(
                 path = path,
                 color = Color.Black,
@@ -187,7 +207,7 @@ fun Doodle(modifier: Modifier = Modifier) {
             // 開始辨識
             Button(
                 onClick = {
-                    val ink = inkBuilder.build()   // 包含全部手寫軌跡的「欲辨識內容」
+                    val ink = inkBuilder.build()
 
                     if (ink.strokes.isEmpty()) {
                         recognizedText = "請先書寫內容"
@@ -203,8 +223,9 @@ fun Doodle(modifier: Modifier = Modifier) {
                                 recognizer?.recognize(ink)
                                     ?.addOnSuccessListener { result ->
                                         if (result.candidates.isNotEmpty()) {
-                                            val topCandidate = result.candidates[0].text
-                                            recognizedText = "辨識結果: $topCandidate"
+                                            val rawLabel = result.candidates[0].text
+                                            val chineseLabel = translateShapeLabelToChinese(rawLabel)
+                                            recognizedText = "辨識結果: $chineseLabel"
                                         } else {
                                             recognizedText = "辨識結果: 無法辨識"
                                         }
@@ -224,9 +245,7 @@ fun Doodle(modifier: Modifier = Modifier) {
 
             // 清除畫布
             Button(onClick = {
-                path = Path()  // 指派新物件位址，立刻觸發 Canvas 重繪並清空畫面
-
-                // 清除 ML Kit 累積的筆畫資料
+                path = Path()
                 inkBuilder = Ink.builder()
                 strokeBuilder = null
                 recognizedText = "請在畫布區手寫，再按「開始辨識」按鈕"
