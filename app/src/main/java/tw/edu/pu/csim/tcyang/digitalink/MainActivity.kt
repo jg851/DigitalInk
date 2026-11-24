@@ -100,14 +100,16 @@ fun Doodle(modifier: Modifier = Modifier) {
                     // 監聽拖曳手勢
                     detectDragGestures(
                         onDragStart = { offset -> /* 手指按下 */
-                            // 按下：記錄 Path 起點與建立單一筆劃收集器
+                            // 按下：記錄 Path 起點
                             val x = offset.x
                             val y = offset.y
-                            val t = System.currentTimeMillis()
+                            val t = System.currentTimeMillis()  // 時間戳記
+
                             path.moveTo(x, y)
-                            strokeBuilder = Ink.Stroke.builder().apply {
-                                addPoint(Ink.Point.create(x, y, t))
-                            }
+
+                            // ML Kit Ink.Stroke.Builder 紀錄起點
+                            strokeBuilder = Ink.Stroke.builder()
+                            strokeBuilder?.addPoint(Ink.Point.create(x, y, t))
                             hasActiveStroke = true
                         },
                         onDrag = { change, dragAmount -> /* 手指移動 */
