@@ -36,6 +36,12 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
+import com.google.mlkit.common.model.DownloadConditions
+import com.google.mlkit.common.model.RemoteModelManager
+import com.google.mlkit.vision.digitalink.recognition.DigitalInkRecognition
+import com.google.mlkit.vision.digitalink.recognition.DigitalInkRecognitionModel
+import com.google.mlkit.vision.digitalink.recognition.DigitalInkRecognitionModelIdentifier
+import com.google.mlkit.vision.digitalink.recognition.DigitalInkRecognizerOptions
 import com.google.mlkit.vision.digitalink.recognition.Ink
 
 class MainActivity : ComponentActivity() {
@@ -59,17 +65,8 @@ fun Doodle(modifier: Modifier = Modifier) {
     val defaultPrompt = "請在畫布區手寫，再按「開始辨識」按鈕"
     var recognizedText by remember { mutableStateOf(defaultPrompt) }
 
-    // 建立一個路徑物件（使用 apply 簡化，保留初始三角形）
-    var path by remember {
-        mutableStateOf(
-            Path().apply {
-                moveTo(50f, 100f)  // 移動到起始點 (50f, 100f)
-                lineTo(200f, 500f) // 畫一條線到 (200f, 500f)
-                lineTo(450f, 400f) // 畫一條線到 (450f, 400f)
-                close()            // 閉合路徑
-            }
-        )
-    }
+    // 建立一個路徑物件
+    var path by remember { mutableStateOf(Path()) }
 
     // ML Kit 墨水與筆劃收集器 ----------
     // inkBuilder 負責收集「整頁的全部筆劃」（把多個單一筆劃組合在一起）。
@@ -80,6 +77,27 @@ fun Doodle(modifier: Modifier = Modifier) {
 
     var strokeBuilder by remember {
         mutableStateOf<Ink.Stroke.Builder?>(null)
+    }
+
+    // 記憶 ML Kit 模型與 Recognizer 實體 (繁體中文 zh-Hant) ----------
+
+    // 取得語言辨識碼
+    val modelIdentifier = remember {
+        try {
+            DigitalInkRecognitionModelIdentifier.fromLanguageTag("zh-Hant")
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // 建立語言模型物件
+    val model = remember(modelIdentifier) {
+        modelIdentifier?.let { DigitalInkRecognitionModel.builder(it).build() }
+    }
+
+    // 建立手寫辨識引擎
+    val recognizer = remember(model) {
+        model?.let { DigitalInkRecognition.getClient(DigitalInkRecognizerOptions.builder(it).build()) }
     }
 
     Column(
@@ -177,7 +195,26 @@ fun Doodle(modifier: Modifier = Modifier) {
                     }
 
                     recognizedText = "正在處理中..."
-                    // TODO: 在此串接 DigitalInkRecognizer 並以 ink 呼叫 recognize(ink)
+
+                    if (model != null) {
+                        RemoteModelManager.getInstance()
+                            .download(model, DownloadConditions.Builder().build())
+                            .addOnSuccessListener {
+                                recognizer?.recognize(ink)
+                                    ?.addOnSuccessListener { result ->
+                                        if (result.candidates.isNotEmpty()) {
+                                            val topCandidate = result.candidates[0].text
+                                            recognizedText = "辨識結果: $topCandidate"
+                                        } else {
+                                            recognizedText = "辨識結果: 無法辨識"
+                                        }
+                                    }
+                                    ?.addOnFailureListener { recognizedText = "辨識失敗: ${it.message}" }
+                            }
+                            .addOnFailureListener { recognizedText = "模型下載失敗" }
+                    } else {
+                        recognizedText = "模型建立失敗"
+                    }
                 }
             ) {
                 Text("開始辨識")
@@ -186,14 +223,14 @@ fun Doodle(modifier: Modifier = Modifier) {
             Spacer(modifier = Modifier.width(16.dp))
 
             // 清除畫布
-            Button(
-                onClick = {
-                    path = Path()
-                    strokeBuilder = null
-                    inkBuilder = Ink.builder()
-                    recognizedText = defaultPrompt
-                }
-            ) {
+            Button(onClick = {
+                path = Path()  // 指派新物件位址，立刻觸發 Canvas 重繪並清空畫面
+
+                // 清除 ML Kit 累積的筆畫資料
+                inkBuilder = Ink.builder()
+                strokeBuilder = null
+                recognizedText = "請在畫布區手寫，再按「開始辨識」按鈕"
+            }) {
                 Text("清除")
             }
         }
