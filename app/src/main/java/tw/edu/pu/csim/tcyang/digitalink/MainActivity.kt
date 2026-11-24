@@ -37,6 +37,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
+import com.google.mlkit.vision.digitalink.recognition.Ink
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -73,6 +74,17 @@ fun Doodle(modifier: Modifier = Modifier) {
         )
     }
 
+    // ML Kit 墨水與筆劃收集器 ----------
+    // inkBuilder 負責收集「整頁的全部筆劃」（把多個單一筆劃組合在一起）。
+    // strokeBuilder 負責記錄「單一筆劃」（手指從按下到抬起，抬起後就歸零）。
+    var inkBuilder by remember {
+        mutableStateOf<Ink.Builder>(Ink.builder())
+    }
+
+    var strokeBuilder by remember {
+        mutableStateOf<Ink.Stroke.Builder?>(null)
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -88,10 +100,14 @@ fun Doodle(modifier: Modifier = Modifier) {
                     // 監聽拖曳手勢
                     detectDragGestures(
                         onDragStart = { offset -> /* 手指按下 */
-                            // 按下：記錄 Path 起點
+                            // 按下：記錄 Path 起點與建立單一筆劃收集器
                             val x = offset.x
                             val y = offset.y
+                            val t = System.currentTimeMillis()
                             path.moveTo(x, y)
+                            strokeBuilder = Ink.Stroke.builder().apply {
+                                addPoint(Ink.Point.create(x, y, t))
+                            }
                             hasActiveStroke = true
                         },
                         onDrag = { change, dragAmount -> /* 手指移動 */
@@ -107,7 +123,9 @@ fun Doodle(modifier: Modifier = Modifier) {
                             // 移動：拉線並加入點座標
                             val x = change.position.x
                             val y = change.position.y
+                            val t = System.currentTimeMillis()
                             path.lineTo(x, y)
+                            strokeBuilder?.addPoint(Ink.Point.create(x, y, t))
 
                             // 複製出一個內容一模一樣、但記憶體位址全新的 Path 物件
                             // 並指派回 path，藉此強制 Compose 重繪 Canvas 畫面
@@ -116,12 +134,17 @@ fun Doodle(modifier: Modifier = Modifier) {
                             path = tempPath
                         },
                         onDragEnd = { /* 手指離開 */
+                            strokeBuilder?.let { builder ->
+                                inkBuilder.addStroke(builder.build())
+                            }
+                            strokeBuilder = null
                             if (hasActiveStroke) {
                                 strokeCount++
                                 hasActiveStroke = false
                             }
                         },
                         onDragCancel = { /* 手勢中斷 */
+                            strokeBuilder = null
                             hasActiveStroke = false
                         }
                     )
@@ -153,7 +176,8 @@ fun Doodle(modifier: Modifier = Modifier) {
                     recognizedText = if (strokeCount == 0) {
                         "尚未偵測到筆畫，請先在畫布區手寫"
                     } else {
-                        "已記錄 $strokeCount 筆手寫軌跡（待串接辨識模型）"
+                        val ink = inkBuilder.build()
+                        "已收集 ${ink.strokes.size} 筆手寫軌跡，準備辨識..."
                     }
                 }
             ) {
@@ -168,6 +192,8 @@ fun Doodle(modifier: Modifier = Modifier) {
                     path = Path()
                     strokeCount = 0
                     hasActiveStroke = false
+                    strokeBuilder = null
+                    inkBuilder = Ink.builder()
                     recognizedText = defaultPrompt
                 }
             ) {
